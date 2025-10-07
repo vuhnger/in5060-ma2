@@ -554,9 +554,17 @@ def main() -> None:
     four_g_dir = Path(args.four_g_dir)
     five_g_dir = Path(args.five_g_dir)
 
+    print("Starting passive quality analysis...")
+    print(f"  4G directory: {four_g_dir}")
+    print(f"  5G directory: {five_g_dir}")
+    print(f"  Include OW: {'yes' if args.include_ow else 'no'}")
+
     pclip = parse_percentile_clip(args.pclip)
     speed_thresholds = parse_speed_thresholds(args.speed_thresholds)
+    print(f"  Percentile clip: {pclip[0]:.2f}–{pclip[1]:.2f}")
+    print(f"  OD speed thresholds (m/s): {speed_thresholds[0]:.2f}, {speed_thresholds[1]:.2f}")
 
+    print("Loading passive measurement files...")
     load_result = load_passive_files(four_g_dir, five_g_dir, include_ow=args.include_ow)
     df = load_result.dataframe
 
@@ -564,9 +572,19 @@ def main() -> None:
         print("No passive data found under the provided directories.")
         return
 
+    total_rows = len(df)
+    unique_files = df["file"].nunique()
+    print(f"  Loaded {unique_files} files with {total_rows} usable rows.")
+    if load_result.kpi_columns:
+        print(f"  KPI columns selected: {', '.join(load_result.kpi_columns)}")
+
     df = assign_speed_buckets(df, speed_thresholds)
+    print("  Assigned speed buckets.")
+
+    print("Computing NetworkQuality scores...")
     df, norm_columns = compute_network_quality(df, load_result.kpi_columns, pclip)
 
+    print("Aggregating per-file statistics...")
     per_file_env, per_file_speed = aggregate_per_file(df)
     summary_overall, summary_by_rat, summary_by_speed = summarize_groups(per_file_env, per_file_speed)
 
@@ -580,11 +598,13 @@ def main() -> None:
     maybe_print_ttests(per_file_env)
 
     results_dir = Path("results")
+    print(f"Writing summaries to {results_dir}/ ...")
     save_results(results_dir, summary_overall, summary_by_rat, summary_by_speed)
     plot_optionals(df, summary_by_rat, results_dir, save_plots=args.save_plots)
 
     if norm_columns:
         print(f"\nComputed NetworkQuality using normalized KPIs: {', '.join(norm_columns)}")
+    print("Analysis complete.")
 
 
 if __name__ == "__main__":
