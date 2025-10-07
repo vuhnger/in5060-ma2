@@ -15,7 +15,7 @@ import argparse
 from dataclasses import dataclass
 from pathlib import Path
 import re
-from typing import Dict, Iterable, List, Sequence, Tuple
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
@@ -394,12 +394,40 @@ def save_results(
     summary_overall: pd.DataFrame,
     summary_by_rat: pd.DataFrame,
     summary_by_speed: pd.DataFrame,
+    per_file_env: Optional[pd.DataFrame] = None,
+    per_file_speed: Optional[pd.DataFrame] = None,
+    kpi_presence: Optional[pd.DataFrame] = None,
 ) -> None:
     """Create results/ if missing; write summary CSVs."""
     results_dir.mkdir(parents=True, exist_ok=True)
     summary_overall.to_csv(results_dir / "summary_overall.csv", index=False)
     summary_by_rat.to_csv(results_dir / "summary_by_rat.csv", index=False)
     summary_by_speed.to_csv(results_dir / "summary_by_speed.csv", index=False)
+
+    if per_file_env is not None and not per_file_env.empty:
+        export_env = per_file_env.rename(
+            columns={
+                "mean_quality": "mean",
+                "median_quality": "median",
+                "std_quality": "std",
+                "sample_count": "count",
+            }
+        )
+        export_env.to_csv(results_dir / "per_file_stats.csv", index=False)
+
+    if per_file_speed is not None and not per_file_speed.empty:
+        export_speed = per_file_speed.rename(
+            columns={
+                "mean_quality": "mean",
+                "median_quality": "median",
+                "std_quality": "std",
+                "sample_count": "count",
+            }
+        )
+        export_speed.to_csv(results_dir / "per_file_stats_by_speed.csv", index=False)
+
+    if kpi_presence is not None and not kpi_presence.empty:
+        kpi_presence.to_csv(results_dir / "kpi_presence.csv", index=False)
 
 
 def plot_optionals(
@@ -599,7 +627,15 @@ def main() -> None:
 
     results_dir = Path("results")
     print(f"Writing summaries to {results_dir}/ ...")
-    save_results(results_dir, summary_overall, summary_by_rat, summary_by_speed)
+    save_results(
+        results_dir,
+        summary_overall,
+        summary_by_rat,
+        summary_by_speed,
+        per_file_env=per_file_env,
+        per_file_speed=per_file_speed,
+        kpi_presence=load_result.kpi_presence,
+    )
     plot_optionals(df, summary_by_rat, results_dir, save_plots=args.save_plots)
 
     if norm_columns:

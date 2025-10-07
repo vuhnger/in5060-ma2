@@ -31,6 +31,7 @@ SUMMARY_FILES = {
 
 OPTIONAL_FILES = {
     "per_file": "per_file_stats.csv",
+    "per_file_speed": "per_file_stats_by_speed.csv",
     "kpi_presence": "kpi_presence.csv",
 }
 
@@ -52,6 +53,7 @@ class LoadedData:
     summary_by_rat: pd.DataFrame
     summary_by_speed: pd.DataFrame
     per_file_stats: Optional[pd.DataFrame]
+    per_file_speed_stats: Optional[pd.DataFrame]
     kpi_presence: Optional[pd.DataFrame]
 
 
@@ -96,6 +98,11 @@ def load_summaries(results_dir: Path) -> LoadedData:
     if per_file_path.exists():
         per_file_df = _normalize_per_file(pd.read_csv(per_file_path))
 
+    per_file_speed_df = None
+    per_file_speed_path = results_dir / OPTIONAL_FILES["per_file_speed"]
+    if per_file_speed_path.exists():
+        per_file_speed_df = _normalize_per_file(pd.read_csv(per_file_speed_path))
+
     kpi_presence_df = None
     kpi_presence_path = results_dir / OPTIONAL_FILES["kpi_presence"]
     if kpi_presence_path.exists():
@@ -106,6 +113,7 @@ def load_summaries(results_dir: Path) -> LoadedData:
         summary_by_rat=data["by_rat"],
         summary_by_speed=data["by_speed"],
         per_file_stats=per_file_df,
+        per_file_speed_stats=per_file_speed_df,
         kpi_presence=kpi_presence_df,
     )
 
@@ -279,7 +287,12 @@ def compare_by_rat(
     return results
 
 
-def analyze_speed_buckets(summary_by_speed: pd.DataFrame) -> Dict[str, object]:
+def analyze_speed_buckets(
+    summary_by_speed: pd.DataFrame,
+    per_file_speed_stats: Optional[pd.DataFrame],
+    bootstrap_iters: int,
+    rng: np.random.Generator,
+) -> Dict[str, object]:
     """Rank speed buckets by mean; compute diffs vs inside; check ordering."""
     if summary_by_speed.empty:
         return {"ranking": [], "violations": [], "deltas": {}}
@@ -313,10 +326,36 @@ def analyze_speed_buckets(summary_by_speed: pd.DataFrame) -> Dict[str, object]:
         if not is_non_increasing:
             violations.append(f"{metric} ordering deviates from expected inside ≥ quasi-static ≥ slow ≥ fast")
 
+    significance: Dict[str, Dict[str, Optional[object]]] = {}
+    if per_file_speed_stats is not None and "speed_bucket" in per_file_speed_stats.columns:
+        inside_samples = per_file_speed_stats.loc[
+            per_file_speed_stats["speed_bucket"] == "inside", "mean"
+        ].dropna()
+        if not inside_samples.empty:
+            for bucket in df["speed_bucket"]:
+                if bucket == "inside":
+                    continue
+                bucket_samples = per_file_speed_stats.loc[
+                    per_file_speed_stats["speed_bucket"] == bucket, "mean"
+                ].dropna()
+                if bucket_samples.empty:
+                    significance[bucket] = {"effect_size": None, "effect_ci": None, "t_test": None}
+                    continue
+                effect, ci = compute_effect_size(
+                    inside_samples, bucket_samples, bootstrap_iters, rng
+                )
+                t_result = welch_ttest(inside_samples, bucket_samples)
+                significance[bucket] = {
+                    "effect_size": effect,
+                    "effect_ci": ci,
+                    "t_test": t_result,
+                }
+
     return {
         "ranking": ranking,
         "deltas": deltas,
         "violations": violations,
+        "significance": significance,
     }
 
 
@@ -333,6 +372,15 @@ def _format_ttest(t_result: Optional[Tuple[float, float]]) -> str:
         return "n/a"
     t_stat, p_value = t_result
     return f"t={t_stat:.2f}, p={p_value:.4f}"
+
+
+def _significance_label(t_result: Optional[Tuple[float, float]], alpha: float) -> str:
+    if t_result is None:
+        return "n/a"
+    _, p_value = t_result
+    if not np.isfinite(p_value):
+        return "n/a"
+    return "yes" if p_value < alpha else "no"
 
 
 def _markdown_table(headers: Iterable[str], rows: List[Iterable[object]]) -> str:
@@ -362,6 +410,7 @@ def write_markdown_summary(
     summary_by_rat: pd.DataFrame,
     summary_by_speed: pd.DataFrame,
     available_plots: List[str],
+    alpha: float,
 ) -> None:
     """Write results/summary.md with required sections and compact tables."""
     lines: List[str] = []
@@ -437,6 +486,53 @@ def write_markdown_summary(
         )
         lines.append("\n### Speed Buckets")
         lines.append(speed_table)
+
+    # Significance tests
+    lines.append("\n## Significance Tests")
+    significance_rows: List[Iterable[object]] = []
+    significance_rows.append(
+        [
+            "Overall (inside vs outdoor)",
+            _format_effect(overall_metrics.get("effect_size"), overall_metrics.get("effect_ci")),
+            _format_ttest(overall_metrics.get("t_test")),
+            _significance_label(overall_metrics.get("t_test"), alpha),
+        ]
+    )
+    for entry in rat_metrics:
+        significance_rows.append(
+            [
+                f"{entry['rat']} (inside vs outdoor)",
+                _format_effect(entry.get("effect_size"), entry.get("effect_ci")),
+                _format_ttest(entry.get("t_test")),
+                _significance_label(entry.get("t_test"), alpha),
+            ]
+        )
+    if significance_rows:
+        significance_table = _markdown_table(
+            ["Comparison", "Effect (Hedges’ g)", "Welch t-test", f"Significant @ α={alpha}"],
+            significance_rows,
+        )
+        lines.append(significance_table)
+
+    speed_significance = speed_analysis.get("significance") or {}
+    if speed_significance:
+        bucket_rows: List[Iterable[object]] = []
+        for bucket, stats_dict in speed_significance.items():
+            bucket_rows.append(
+                [
+                    f"inside vs {bucket}",
+                    _format_effect(stats_dict.get("effect_size"), stats_dict.get("effect_ci")),
+                    _format_ttest(stats_dict.get("t_test")),
+                    _significance_label(stats_dict.get("t_test"), alpha),
+                ]
+            )
+        if bucket_rows:
+            lines.append("\n### Speed Bucket Contrasts")
+            bucket_table = _markdown_table(
+                ["Comparison", "Effect (Hedges’ g)", "Welch t-test", f"Significant @ α={alpha}"],
+                bucket_rows,
+            )
+            lines.append(bucket_table)
 
     # Plots (Optional)
     lines.append("\n## Plots (Optional)")
@@ -518,7 +614,9 @@ def main() -> None:
         args.bootstrap_iters,
         rng,
     )
-    speed_analysis = analyze_speed_buckets(data.summary_by_speed)
+    speed_analysis = analyze_speed_buckets(
+        data.summary_by_speed, data.per_file_speed_stats, args.bootstrap_iters, rng
+    )
 
     available_plots = [
         str((results_dir / plot).as_posix())
@@ -535,17 +633,29 @@ def main() -> None:
         data.summary_by_rat,
         data.summary_by_speed,
         available_plots,
+        args.alpha,
     )
 
     print("Report written to results/summary.md")
 
     effect = overall_metrics.get("effect_size")
     if effect is None:
-        print("Per-file statistics unavailable; effect sizes limited.")
+        if data.per_file_stats is None:
+            print("Effect sizes unavailable: per_file_stats.csv not found.")
+        else:
+            print("Effect sizes unavailable: insufficient per-file samples.")
     else:
         ci = overall_metrics.get("effect_ci")
         ci_text = f" (95% CI {ci[0]:.3f}–{ci[1]:.3f})" if ci else ""
         print(f"Overall Hedges’ g: {effect:.3f}{ci_text}")
+
+    for entry in rat_metrics:
+        effect = entry.get("effect_size")
+        if effect is None:
+            continue
+        ci = entry.get("effect_ci")
+        ci_text = f" (95% CI {ci[0]:.3f}–{ci[1]:.3f})" if ci else ""
+        print(f"{entry['rat']} Hedges’ g: {effect:.3f}{ci_text}")
 
     t_test = overall_metrics.get("t_test")
     if t_test is not None:
@@ -553,10 +663,41 @@ def main() -> None:
         significance = "significant" if p_value < args.alpha else "not significant"
         print(f"Welch t-test: t={t_stat:.2f}, p={p_value:.4f} ({significance} at alpha={args.alpha})")
     else:
-        print("Welch t-test skipped (requires scipy and per-file stats).")
+        if stats is None:
+            print("Welch t-test skipped: install scipy to enable statistical tests.")
+        elif data.per_file_stats is None:
+            print("Welch t-test skipped: per_file_stats.csv missing.")
+        else:
+            print("Welch t-test skipped: insufficient per-file samples.")
 
-    if speed_analysis.get("violations"):
-        print("Speed bucket monotonicity warnings detected.")
+    for entry in rat_metrics:
+        t_result = entry.get("t_test")
+        if t_result is None:
+            continue
+        t_stat, p_value = t_result
+        significance = "significant" if p_value < args.alpha else "not significant"
+        print(
+            f"{entry['rat']} Welch t-test: t={t_stat:.2f}, p={p_value:.4f} "
+            f"({significance} at alpha={args.alpha})"
+        )
+
+    violations = speed_analysis.get("violations") or []
+    if violations:
+        print("Speed bucket monotonicity warnings:")
+        for note in violations:
+            print(f"  - {note}")
+
+    bucket_significance = speed_analysis.get("significance") or {}
+    for bucket, stats_dict in bucket_significance.items():
+        t_result = stats_dict.get("t_test")
+        if t_result is None:
+            continue
+        t_stat, p_value = t_result
+        significance = "significant" if p_value < args.alpha else "not significant"
+        print(
+            f"inside vs {bucket}: t={t_stat:.2f}, p={p_value:.4f} "
+            f"({significance} at alpha={args.alpha})"
+        )
 
 
 if __name__ == "__main__":
