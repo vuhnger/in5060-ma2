@@ -36,3 +36,10 @@ Key options:
 - Console tables comparing IS vs OD overall, per RAT, and by speed bucket.
 - CSV summaries written to `results/summary_overall.csv`, `results/summary_by_rat.csv`, and `results/summary_by_speed.csv`.
 - Optional plots saved under `results/` when matplotlib is available (`boxplot_quality_by_env.png`, `bar_quality_mean_std_by_rat.png`).
+
+### Terminology
+- **RAT**: Radio Access Technology (e.g., 4G, 5G).
+- **IS**: Indoor Static measurements.
+- **OD**: Outdoor Driving measurements.
+- **OW**: Outside Walking measurements (included only with `--include_ow`).
+- **KPI**: Key Performance Indicator (RF metrics like SINR, RSRP, RSRQ).
