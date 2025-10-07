@@ -37,6 +37,33 @@ Key options:
 - CSV summaries written to `results/summary_overall.csv`, `results/summary_by_rat.csv`, and `results/summary_by_speed.csv`.
 - Optional plots saved under `results/` when matplotlib is available (`boxplot_quality_by_env.png`, `bar_quality_mean_std_by_rat.png`).
 
+## Post-processing Scripts
+
+Once `analyze_passive_quality.py` has produced the summary CSVs under `results/`, two additional scripts help document and visualise findings without re-reading the raw datasets.
+
+### Statistical report
+```bash
+python3 analyze_results_and_report.py --results_dir ./results
+```
+- Computes overall and per-RAT deltas, Hedges’ g effect sizes (with bootstrap CIs if per-file stats exist), and Welch t-tests.
+- Ranks OD speed buckets and flags monotonicity issues.
+- Writes a concise Markdown report to `results/summary.md` including compact tables and references to any generated plots.
+
+Optional flags:
+- `--alpha FLOAT` (default `0.05`): significance threshold for reporting p-values.
+- `--bootstrap_iters INT` (default `2000`): resamples for effect-size confidence intervals.
+
+### Plotting utility
+```bash
+python3 plot_passive_quality_results.py --results_dir ./results
+```
+- Generates PNG figures from the summary CSVs (`plot_*` files under `results/`).
+- Requires only matplotlib; gracefully skips plots whose inputs are missing.
+
+Optional flags:
+- `--save_all`: default behaviour is to save every available plot; flag retained for parity.
+- `--skip_ecdf`: omit ECDF plots when per-file statistics are large or absent.
+
 ### Terminology
 - **RAT**: Radio Access Technology (e.g., 4G, 5G).
 - **IS**: Indoor Static measurements.
