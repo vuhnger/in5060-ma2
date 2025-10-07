@@ -44,6 +44,9 @@ EXPECTED_PLOTS = [
     "plot_ecdf_env_by_rat.png",
     "plot_scatter_file_mean_vs_std.png",
     "plot_kpi_presence.png",
+    "plot_per_file_violin_env.png",
+    "plot_per_file_violin_by_rat.png",
+    "plot_speed_bucket_violin.png",
 ]
 
 
@@ -576,7 +579,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--results_dir",
-        default="./results",
+        default="./results_normalized",
         help="Directory with summary CSV outputs.",
     )
     parser.add_argument(

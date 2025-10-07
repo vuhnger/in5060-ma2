@@ -1,8 +1,9 @@
 # Passive Dataset Processing Overview
 
 This repository’s passive workflow starts with `analyze_passive_quality.py`. The script
-discovers passive CSV logs under the `4G/` and `5G/` folders and produces normalized
-network-quality summaries in `results/`. The key processing stages are:
+discovers passive CSV logs under the `4G/` and `5G/` folders and produces network-quality
+summaries in `results_normalized/` by default (raw KPI variants appear under
+`results_non_normalized/`). The key processing stages are:
 
 1. **File discovery**
    - Scan only the top-level `4G/` and `5G/` directories (no recursion outside them).
@@ -22,6 +23,7 @@ network-quality summaries in `results/`. The key processing stages are:
    - For every KPI and RAT separately, compute the 5th and 95th percentiles (configurable via `--pclip`).
    - Map the 5th percentile to 0 and the 95th percentile to 1; clip outside this range.
    - Handle degenerate distributions by assigning 0.5 to valid samples.
+   - Pass `--disable_normalization` to skip this step and work with raw KPI averages instead (results saved under `results_non_normalized/`).
 
 4. **NetworkQuality score**
    - For each row, average the available normalized KPIs to obtain `NetworkQuality` (0–1 scale).

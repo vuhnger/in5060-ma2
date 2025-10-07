@@ -288,6 +288,51 @@ def assign_speed_buckets(
     return df
 
 
+def compute_raw_mean(df: pd.DataFrame, kpi_columns: Sequence[str]) -> pd.Series:
+    """Compute mean of raw KPI values for fallback non-normalized score."""
+    series = df[kpi_columns].mean(axis=1, skipna=True)
+    series[df[kpi_columns].isna().all(axis=1)] = np.nan
+    return series
+
+
+def _series_limits(series: pd.Series) -> Optional[Tuple[float, float]]:
+    finite = pd.to_numeric(series, errors="coerce").dropna()
+    if finite.empty:
+        return None
+    return float(finite.min()), float(finite.max())
+
+
+def _series_is_normalized(series: pd.Series) -> bool:
+    finite = pd.to_numeric(series, errors="coerce").dropna()
+    if finite.empty:
+        return True
+    return finite.min() >= -0.05 and finite.max() <= 1.05
+
+
+def _expanded_limits_from_series(limits: Optional[Tuple[float, float]], normalized: bool) -> Optional[Tuple[float, float]]:
+    if limits is None:
+        return None
+    low, high = limits
+    if normalized:
+        low_lim = min(0.0, low - 0.05)
+        high_lim = max(1.0, high + 0.05)
+        return low_lim, high_lim
+    span = high - low
+    if span == 0:
+        padding = max(1.0, max(abs(high), abs(low), 1.0) * 0.1)
+    else:
+        padding = max(1.0, abs(span) * 0.1)
+    return low - padding, high + padding
+
+
+def _axis_label_from_series(base: str, normalized: bool, limits: Optional[Tuple[float, float]]) -> str:
+    if normalized:
+        return f"{base} (0-1)"
+    if limits:
+        return f"{base} (raw range {limits[0]:.1f}..{limits[1]:.1f})"
+    return f"{base} (raw units)"
+
+
 def aggregate_per_file(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
     For each (rat, env/speed_bucket, file), compute mean, median, std of NetworkQuality.
@@ -455,12 +500,20 @@ def plot_optionals(
     env_data = [df.loc[df["env"] == env, "NetworkQuality"].dropna() for env in env_order]
     env_labels = [label for label, data in zip(env_order, env_data) if not data.empty]
     env_data = [data for data in env_data if not data.empty]
+    overall_limits = _series_limits(df["NetworkQuality"])
+    normalized_scale = _series_is_normalized(df["NetworkQuality"])
+    scale_suffix = "(normalized)" if normalized_scale else "(raw)"
 
     if env_data:
         plt.figure(figsize=(8, 5))
         plt.boxplot(env_data, labels=env_labels, showmeans=True)
-        plt.ylabel("NetworkQuality (0-1)")
-        plt.title("Network Quality Distribution by Environment")
+        combined = pd.concat(env_data, ignore_index=True)
+        env_limits = _series_limits(combined)
+        plt.ylabel(_axis_label_from_series("NetworkQuality", normalized_scale, env_limits))
+        expanded = _expanded_limits_from_series(env_limits, normalized_scale)
+        if expanded:
+            plt.ylim(expanded)
+        plt.title(f"Network Quality Distribution by Environment {scale_suffix}")
         plt.tight_layout()
         plt.savefig(results_dir / "boxplot_quality_by_env.png", dpi=200)
         plt.close()
@@ -482,8 +535,11 @@ def plot_optionals(
         positions = np.arange(len(rats))
         plt.bar(positions, means, yerr=stds, capsize=6, color=["#1f77b4", "#ff7f0e"])
         plt.xticks(positions, rats)
-        plt.ylabel("NetworkQuality (0-1)")
-        plt.title("Mean Network Quality by RAT")
+        plt.ylabel(_axis_label_from_series("NetworkQuality", normalized_scale, overall_limits))
+        expanded = _expanded_limits_from_series(overall_limits, normalized_scale)
+        if expanded:
+            plt.ylim(expanded)
+        plt.title(f"Mean Network Quality by RAT {scale_suffix}")
         plt.tight_layout()
         plt.savefig(results_dir / "bar_quality_mean_std_by_rat.png", dpi=200)
         plt.close()
@@ -576,6 +632,11 @@ def main() -> None:
         default=True,
         help="Save optional matplotlib figures to results/.",
     )
+    parser.add_argument(
+        "--disable_normalization",
+        action="store_true",
+        help="Skip KPI normalization and compute NetworkQuality from raw KPI values.",
+    )
 
     args = parser.parse_args()
 
@@ -609,8 +670,16 @@ def main() -> None:
     df = assign_speed_buckets(df, speed_thresholds)
     print("  Assigned speed buckets.")
 
-    print("Computing NetworkQuality scores...")
-    df, norm_columns = compute_network_quality(df, load_result.kpi_columns, pclip)
+    if args.disable_normalization:
+        print("Skipping normalization; computing raw KPI averages.")
+        df["NetworkQuality"] = compute_raw_mean(df, load_result.kpi_columns)
+        norm_columns: List[str] = []
+        results_root = Path("results_non_normalized")
+    else:
+        print("Computing NetworkQuality scores...")
+        df, norm_columns = compute_network_quality(df, load_result.kpi_columns, pclip)
+        df["NetworkQuality"] = df["NetworkQuality"].astype(float)
+        results_root = Path("results_normalized")
 
     print("Aggregating per-file statistics...")
     per_file_env, per_file_speed = aggregate_per_file(df)
@@ -625,7 +694,7 @@ def main() -> None:
 
     maybe_print_ttests(per_file_env)
 
-    results_dir = Path("results")
+    results_dir = results_root
     print(f"Writing summaries to {results_dir}/ ...")
     save_results(
         results_dir,

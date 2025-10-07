@@ -1,6 +1,6 @@
 # Passive Results Analysis Overview
 
-The downstream analysis is handled by two scripts that consume only the CSV artefacts in `results/`:
+The downstream analysis is handled by two scripts that consume only the CSV artefacts in the chosen results directory (`results_normalized/` by default, or `results_non_normalized/` when normalization is disabled):
 
 - `analyze_results_and_report.py`: computes statistics, significance tests, and writes a Markdown summary.
 - `plot_passive_quality_results.py`: generates matplotlib figures for dashboards and diagnostics.
@@ -27,16 +27,18 @@ The downstream analysis is handled by two scripts that consume only the CSV arte
    - Missing prerequisites (SciPy or per-file stats) are reported clearly; analyses continue with descriptive statistics.
 
 4. **Markdown summary**
-   - Written to `results/summary.md`.
+   - Written to `<results_dir>/summary.md`.
    - Sections: Title, Key Findings, Method (Brief), Tables (overall, by RAT, by speed), Significance Tests, Plots (optional), Caveats, Next Steps.
    - Significance tables list t-statistics, p-values, and alpha comparisons for overall, per-RAT, and speed-bucket contrasts.
 
 ## Plotting workflow
 
-`plot_passive_quality_results.py` reuses the same CSV inputs to produce PNG figures under `results/`:
+`plot_passive_quality_results.py` reuses the same CSV inputs to produce PNG figures under the specified results directory:
 
 - Bar charts of overall means, RAT-by-environment means, and speed buckets.
-- Optional boxplots, ECDFs, and mean-vs-std scatterplots using per-file stats.
+- Optional boxplots, violin plots, ECDFs, and mean-vs-std scatterplots using per-file stats.
+- Annotated overlays showing mean deltas, percentage differences, and Welch p-values when per-file statistics and SciPy are available.
+- Axis labels and ranges adapt automatically depending on whether the upstream results were normalized (0–1) or raw KPI averages.
 - KPI availability bar chart if `kpi_presence.csv` exists.
 - Each figure is rendered with matplotlib, one per file, using `tight_layout()` and default colour schemes.
 
@@ -44,7 +46,7 @@ The downstream analysis is handled by two scripts that consume only the CSV arte
 
 The `run_full_analysis.py` script orchestrates the entire pipeline:
 
-1. Run `analyze_passive_quality.py` to regenerate CSV summaries and diagnostics.
+1. Run `analyze_passive_quality.py` to regenerate CSV summaries and diagnostics (default `results_normalized/`, or `results_non_normalized/` when `--disable_normalization` is used).
 2. Run `analyze_results_and_report.py` to compute statistics and write the Markdown report.
 3. Run `plot_passive_quality_results.py` to refresh plots.
 

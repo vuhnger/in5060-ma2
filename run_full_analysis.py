@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import subprocess
 import sys
+from pathlib import Path
 from typing import List
 
 
@@ -30,6 +31,16 @@ def main() -> None:
     parser.add_argument("--four-g-dir", default="./4G", help="Path to the passive 4G dataset.")
     parser.add_argument("--five-g-dir", default="./5G", help="Path to the passive 5G dataset.")
     parser.add_argument("--include-ow", action="store_true", help="Pass through to include OW files.")
+    parser.add_argument(
+        "--disable-normalization",
+        action="store_true",
+        help="Generate only non-normalized results (defaults to normalized).",
+    )
+    parser.add_argument(
+        "--run-both",
+        action="store_true",
+        help="Run pipeline twice: normalized (default settings) and non-normalized.",
+    )
     parser.add_argument(
         "--pclip",
         default="0.05,0.95",
@@ -61,46 +72,63 @@ def main() -> None:
 
     python_executable = sys.executable
 
-    analyze_cmd = [
-        python_executable,
-        "analyze_passive_quality.py",
-        "--four_g_dir",
-        args.four_g_dir,
-        "--five_g_dir",
-        args.five_g_dir,
-        "--pclip",
-        args.pclip,
-        "--speed_thresholds",
-        args.speed_thresholds,
-    ]
-    if args.include_ow:
-        analyze_cmd.append("--include_ow")
+    modes = []
+    if args.run_both:
+        modes = [
+            ("./results_normalized", False),
+            ("./results_non_normalized", True),
+        ]
+    else:
+        if args.disable_normalization:
+            modes.append(("./results_non_normalized", True))
+        else:
+            modes.append(("./results_normalized", False))
 
-    report_cmd = [
-        python_executable,
-        "analyze_results_and_report.py",
-        "--results_dir",
-        "./results",
-        "--alpha",
-        str(args.alpha),
-        "--bootstrap_iters",
-        str(args.bootstrap_iters),
-    ]
+    for results_dir_str, disable_norm in modes:
+        results_dir = Path(results_dir_str)
+        analyze_cmd = [
+            python_executable,
+            "analyze_passive_quality.py",
+            "--four_g_dir",
+            args.four_g_dir,
+            "--five_g_dir",
+            args.five_g_dir,
+            "--pclip",
+            args.pclip,
+            "--speed_thresholds",
+            args.speed_thresholds,
+        ]
+        if args.include_ow:
+            analyze_cmd.append("--include_ow")
+        if disable_norm:
+            analyze_cmd.append("--disable_normalization")
 
-    plot_cmd = [
-        python_executable,
-        "plot_passive_quality_results.py",
-        "--results_dir",
-        "./results",
-    ]
-    if args.skip_ecdf:
-        plot_cmd.append("--skip_ecdf")
+        report_cmd = [
+            python_executable,
+            "analyze_results_and_report.py",
+            "--results_dir",
+            results_dir_str,
+            "--alpha",
+            str(args.alpha),
+            "--bootstrap_iters",
+            str(args.bootstrap_iters),
+        ]
 
-    run_step(analyze_cmd, "Running analyze_passive_quality.py")
-    run_step(report_cmd, "Running analyze_results_and_report.py")
-    run_step(plot_cmd, "Running plot_passive_quality_results.py")
+        plot_cmd = [
+            python_executable,
+            "plot_passive_quality_results.py",
+            "--results_dir",
+            results_dir_str,
+        ]
+        if args.skip_ecdf:
+            plot_cmd.append("--skip_ecdf")
 
-    print("\nPipeline completed successfully. Results are stored under ./results/")
+        suffix = " (non-normalized)" if disable_norm else " (normalized)"
+        run_step(analyze_cmd, f"Running analyze_passive_quality.py{suffix}")
+        run_step(report_cmd, f"Running analyze_results_and_report.py{suffix}")
+        run_step(plot_cmd, f"Running plot_passive_quality_results.py{suffix}")
+
+        print(f"\nPipeline completed successfully for {results_dir}/")
 
 
 if __name__ == "__main__":
